@@ -1,85 +1,89 @@
+import sys, socket, struct
+from questions import answer
 
-
-import socket, sys
-
+#Funktio, jossa saadusta tcp-viestista otetaan udp-portti talteen
+#ja tallennetaan se muuttujaan.
+def get_udp(tcp_data):
+	data = tcp_data.split(' ')
+	udp_p = data[1]
+	udp_p.strip()
+	udp_p = int(udp_p)
+	return udp_p
 
 
 def main():
-  
-  if len(sys.argv) < 2:
-    print "Not enough arguments"
-    sys.exit(1)
-  else:
-    print "Arguments received"
-    IP = sys.argv[1]
-    PORT = int(sys.argv[2])
-    TCP_PORT = 10000
+#Komentoriviargumenttien syotto, seka mahdollinen HELP-tulostus, jos argumentteja ei ole oikea maara
+	if len(sys.argv) < 2:
+		print "HELP: Please give server address and port as command-line arguments."
+		print "Server address should be ii.virtues.oulu.fi"
+		print "Please give port number in range of 10000-10100"
+		print "Proper command should be in form: python program.py server port"
+		sys.exit(1)
+	else:
+		print "Arguments received!"
+		addr = str(sys.argv[1])
+		tcp_port = int(sys.argv[2])
+		
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((IP, PORT)) 
+	host_ip = socket.gethostbyname(addr)
+	
 
-    s.send("HELO 10000\r\n")
-    data = s.recv(1024)
-    UDP_PORT = UDP(data)
-    
-    
-    s.close()
+	#Luodaan TCP- ja UDP-socket
 
-    print 'Received', data
-    
-        #answer(question)
-        
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(('0.0.0.0', 10000))
-    
-    while(1):
-      msg = "Hello"
-      try:
-        sock.sendto(msg, (IP, TCP_PORT))
-        received = sock.recvfrom(1024)
-        
-        print "Server reply: " + received
+	tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-      except socket.error, msg:
-        print "Error Code: " + str(msg[0]) + " Message " + msg[1]
-        sys.exit(1)
+	#Etsitaan oikea portti valilta 10000-10100
+	for bind_port in range(10000,10100):
+		try:
+			udp_socket.bind(("",bind_port))
+			break;
+		except udp_socket.error:
+			#Annetaan virhe, mikali porttia ei ole kaytettavissa.
+			print "Couldn't bind port"
+			
 
+	tcp_socket.connect((host_ip, tcp_port))
 
+	#Lahetetaan TCP:lla HELO viesti + portti, johon bindataan.
+	tcp_socket.send("HELO %i\r\n" % bind_port)
+	tcp_data = tcp_socket.recv(1024)
+	udp_port = get_udp(tcp_data)
 
-questions = {
-  "What is your name?":
-  "It is Arthur, King of the Britons.",
-  "What is your quest?":
-  "To seek the Holy Grail.",
-  "What is your favourite colour?":
-  "Blue.",
-  "What is the capital of Assyria?":
-  "I don't know that.",
-  "What is the air-speed velocity of an unladen swallow?":
-  "What do you mean? An African or European swallow?",
-}
- 
- 
-def answer(question):
-  a = list()
-  while True:
-    part, separator, question = question.partition('?')
-    part = part.lstrip() + separator
-    if part in questions:
-      a.append(questions[part])
-    if not question:
-      break
-    return ' '.join(a) 
+	#Luodaan UDP:n headeri osio ja lahetetaan avaava viesti serverille.
+	msg = "The eagle has landed\r\n"
+	eom = False
+	ack = False
+	rem = 0
+	lenght = len(msg)
 
-def UDP(data):
-  d = data.split(' ')
-  UDP_PORT = d[1]
-  UDP_PORT.strip()
-  UDP_PORT = int(UDP_PORT)
-  return UDP_PORT
+	msg_packet = struct.pack("!??HH64s", eom, ack, lenght, rem, msg)
+	udp_socket.sendto(msg_packet, (host_ip, udp_port))
 
-if __name__ == '__main__':
-  try:
-    main()
-  except KeyboardInterrupt:
-    sys.exit(1)
+	
+	#Avataan ja puretaan saadut viestit struct.unpack_from toiminnolla
+	#Kaytetaan questions.py tiedoston answers-funktiota oikeiden vastausten toimittamiseen
+	#Lopuksi kun vastausta ei ole, suljetaan yhteys.
+	while(1):
+		data_r,addr = udp_socket.recvfrom(1024)
+		(eom, ack, rem, lenght, msg) =  struct.unpack_from("!??HH64s", data_r, 0) #struct.unpack aiheutti virheilmoituksen
+		print msg #Tulostetaan kysymys, jotta voi seurata ohjelman toimintaa
+		message_out = answer(msg)
+		message = struct.pack("!??HH64s", eom, ack, rem, lenght, message_out)
+		udp_socket.sendto(message, (host_ip, udp_port))
+		print message #Kuten myos vastaus, jolloin tiedetaan, etta ohjelma toimii oikein.
+		if not message_out: 
+			break
+	
+	#Suljetaan kumpikin yhteys kun ohjelma on valmis		
+	udp_socket.close()
+	tcp_socket.close()
+	print "Closing..."
+		
+
+if __name__ == "__main__":
+	try:
+		main()
+	except KeyboardInterrupt:
+		print "You pressed ctrl+c"
+		sys.exit(1)
